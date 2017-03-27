@@ -18,11 +18,14 @@ Swatcher is licensed under the RPL 1.5 license. More details can be found [here]
 * When a large file is being uploaded, copied or moved, Swatcher will wait until the IO operations are completed before sending a creation notice.
 * In addition to the aforementioned, `SwatcherCreatedEventArgs` includes a `ProcessingTime` property to inform you as to how long the IO operation took.
 * In the `ISwatcherConfig`, you can specify a custom filter for `Created`, `Changed`, `Deleted` and `Renamed` events so an event is never raised for stuff you're not interested in.
-* I added `LibLog` to enable developers to "hook" diagnostic info as a Swatcher is processing file system events. Thus, you'll be able to seamlessly integrate a Swatcher with whatever logging mechanism you're using. Create an issue for info your interested in and I will consider adding it to the library!
+* I added `LibLog` to enable developers to "hook" diagnostic info as a Swatcher is processing file system events. Thus, you'll be able to seamlessly integrate a Swatcher with whatever logging mechanism you're using. 
 
 ### Installation
 Swatcher is installed using [NuGet](https://www.nuget.org/packages/Swatcher/):
 `Install-Package Swatcher`
+
+### Quirky Results with Text Editors
+You may notice some strange artifacts when using a text editor (e.g. Visual Studio, Word, Atom ). Swatcher is'nt going nuts! These text editors may create temp files or delete and re-create the file you're editing frequently. There are plans to add extensions for popular text editors. Let me know if there's one most important to you or if you'd like to contribute!
 
 ### Configuring a Swatcher
 ```c#
