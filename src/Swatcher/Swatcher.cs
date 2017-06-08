@@ -35,6 +35,7 @@ namespace BraveLantern.Swatcher
         /// </summary>
         /// <value><c>true</c> if this instance is running; otherwise, <c>false</c>.</value>
         public bool IsRunning { get; private set; }
+
         public IObservable<SwatcherEventArgs> Changed { get; private set; }
         public IObservable<SwatcherCreatedEventArgs> Created { get; private set; }
         public IObservable<SwatcherEventArgs> Deleted { get; private set; }
@@ -44,7 +45,10 @@ namespace BraveLantern.Swatcher
         public event EventHandler<SwatcherEventArgs> ItemDeleted;
         public event EventHandler<SwatcherRenamedEventArgs> ItemRenamed;
 
-        public Swatcher(ISwatcherConfig config):this(config,new WindowsFacade()) { }
+        public Swatcher(ISwatcherConfig config) : this(config, new WindowsFacade())
+        {
+        }
+
         internal Swatcher(ISwatcherConfig config, IWindowsFacade windowsFacade)
         {
             Config = config;
@@ -69,7 +73,7 @@ namespace BraveLantern.Swatcher
             Changed = CreatePublicChangedStream(changedEventStream,
                 changedEventWindows, createdEventWindows, finishedCreatedEventWindows);
 
-            ChangedEventPatternSource = 
+            ChangedEventPatternSource =
                 Changed.Select(x => new EventPattern<SwatcherEventArgs>(this, x)).ToEventPattern();
             ChangedEventPatternSource.OnNext += OnItemChanged;
 
@@ -88,21 +92,25 @@ namespace BraveLantern.Swatcher
 
         private IObservable<SwatcherRenamedEventArgs> CreatePublicRenamedStream(ISwatcherConfig config)
         {
-             return _renamedSubject.AsObservable()
-                .CombineWithPrevious((previous, current) =>
+            return Observable.Create<SwatcherRenamedEventArgs>(observer =>
                 {
-                    if ((previous?.Event == FileSystemItemEvent.RenamedOldName) &&
-                        (current.Event == FileSystemItemEvent.RenamedNewName))
-                        return new SwatcherRenamedEventArgs(config, current.Name, previous.Name);
+                    return _renamedSubject
+                        .CombineWithPrevious((previous, current) =>
+                        {
+                            if ((previous?.Event == FileSystemItemEvent.RenamedOldName) &&
+                                (current.Event == FileSystemItemEvent.RenamedNewName))
+                                return new SwatcherRenamedEventArgs(config, current.Name, previous.Name);
 
-                    return null;
-                })
-                .WhereNotNull()
-                .Do(x =>
-                {
-                    if (!Config.LoggingEnabled) return;
-                    Logger.Debug(
-                        $"[Renamed] OldName: {x.OldName}, Name: {x.Name}, OccurredAt:{x.TimeOccurred.ToLocalTime()}");
+                            return null;
+                        })
+                        .WhereNotNull()
+                        .Do(x =>
+                        {
+                            if (!Config.LoggingEnabled) return;
+                            Logger.Debug(
+                                $"[Renamed] OldName: {x.OldName}, Name: {x.Name}, OccurredAt:{x.TimeOccurred.ToLocalTime()}");
+                        })
+                        .SubscribeSafe(observer);
                 })
                 .Publish()
                 .RefCount();
@@ -110,16 +118,21 @@ namespace BraveLantern.Swatcher
 
         private IObservable<SwatcherEventArgs> CreatePublicDeletedStream()
         {
-            return _deletedSubject.AsObservable()
-                .SelectConfiguredItemTypes(Config)
-                .Do(x =>
+            return Observable.Create<SwatcherEventArgs>(observer =>
                 {
-                    if (!Config.LoggingEnabled) return;
+                    return _deletedSubject
+                        .SelectConfiguredItemTypes(Config)
+                        .Do(x =>
+                        {
+                            if (!Config.LoggingEnabled) return;
 
-                    Logger.Debug($"[Deleted] Name: {x.Name}, OccurredAt:{x.TimeOccurred.ToLocalTime()}");
+                            Logger.Debug($"[Deleted] Name: {x.Name}, OccurredAt:{x.TimeOccurred.ToLocalTime()}");
+                        })
+                        .SubscribeSafe(observer);
                 })
                 .Publish()
                 .RefCount();
+
         }
 
         private IObservable<SwatcherCreatedEventArgs> CreatePublicCreatedStream(
@@ -150,24 +163,24 @@ namespace BraveLantern.Swatcher
         }
 
         private IObservable<SwatcherCreatedEventArgs> CreateFinishedCreatedEventStream(
-            IObservable<SwatcherCreatedEventArgs> createdEventStream )
+            IObservable<SwatcherCreatedEventArgs> createdEventStream)
         {
             return Observable.Create<SwatcherCreatedEventArgs>(observer =>
-            {
-                return
-                    createdEventStream
-                        .SelectConfiguredItemTypes(Config)
-                        .Select(x =>
+                {
+                    return
+                        createdEventStream
+                            .SelectConfiguredItemTypes(Config)
+                            .Select(x =>
                                 Observable.Interval(OneSecond, ThreadPoolScheduler.Instance)
                                     .StartWith(-1L)
                                     .SkipWhile(_ => IsFileLocked(x.FullPath))
                                     .Take(1)
                                     .Do(_ => x.MarkCompleted())
                                     .Select(_ => x)
-                        )
-                        .Merge()
-                        .Subscribe(observer);
-            })
+                            )
+                            .Merge()
+                            .SubscribeSafe(observer);
+                })
                 .Publish()
                 .RefCount();
         }
@@ -211,7 +224,7 @@ namespace BraveLantern.Swatcher
                             finishedCreatedEventWindows);
                     //.Do(x => Logger.Debug($"[FinishedCreatedEventsFiltered] Allowed {x.FullPath}"));
 
-                    return finishedCreatedEventsFiltered.Subscribe(observer);
+                    return finishedCreatedEventsFiltered.SubscribeSafe(observer);
                 })
                 .Do(x =>
                 {
@@ -282,23 +295,23 @@ namespace BraveLantern.Swatcher
             TokenSource = new CancellationTokenSource();
             CreatedEventsInProgress = new HashSet<string>();
 
-                await DoSecurityAssertions(Config.PathToWatch).ConfigureAwait(false);
-                await SetDirectoryHandle().ConfigureAwait(false);
-                await SetCompletionPortHandle(Config.Id ?? -1).ConfigureAwait(false);
-            
-                var threadPoolSubscription = Observable.Range(1, Environment.ProcessorCount*2)
-                    .Select(threadNumber => new Thread(ThreadPoolWorker()) { Name = $"{threadNumber}" })
-                    .Subscribe(t => t.Start(TokenSource.Token));
+            await DoSecurityAssertions(Config.PathToWatch).ConfigureAwait(false);
+            await SetDirectoryHandle().ConfigureAwait(false);
+            await SetCompletionPortHandle(Config.Id ?? -1).ConfigureAwait(false);
 
-                Disposables = new CompositeDisposable()
-                {
-                    threadPoolSubscription,
-                    CompletionPortHandle,
-                    DirectoryHandle,
-                };
+            var threadPoolSubscription = Observable.Range(1, Environment.ProcessorCount * 2)
+                .Select(threadNumber => new Thread(ThreadPoolWorker()) {Name = $"{threadNumber}"})
+                .Subscribe(t => t.Start(TokenSource.Token));
 
-                if(Config.LoggingEnabled)
-                    Logger.Info($"Swatcher has started");
+            Disposables = new CompositeDisposable()
+            {
+                threadPoolSubscription,
+                CompletionPortHandle,
+                DirectoryHandle,
+            };
+
+            if (Config.LoggingEnabled)
+                Logger.Info($"Swatcher has started");
         }
 
         public async Task Stop()
@@ -324,15 +337,15 @@ namespace BraveLantern.Swatcher
             {
                 try
                 {
-                    if(Config.LoggingEnabled)
+                    if (Config.LoggingEnabled)
                         Logger.Info($"Starting Thread {Thread.CurrentThread.Name}");
 
                     Interlocked.Increment(ref _runningThreads);
 
-                    var token = (CancellationToken)parameter;
+                    var token = (CancellationToken) parameter;
                     while (!token.IsCancellationRequested)
                     {
-                        WatchFolderForChanges(this, Config, WindowsFacade, DirectoryHandle);
+                        WatchFolderForChanges(Config, WindowsFacade, DirectoryHandle);
                         DoQueuedCompletionWork(
                             Config, WindowsFacade, CompletionPortHandle, _createdSubject,
                             _deletedSubject, _changedSubject, _renamedSubject);
@@ -360,7 +373,8 @@ namespace BraveLantern.Swatcher
                     //when using IOCPs, we can send our own custom messages to the GetQueuedCompletionStatus
                     //method by call PostQueuedCompletionStatus. In this case, we want to stop the threads that are
                     //waiting on change events, so we will send a custom completion key "StopIocpThreads".
-                    WindowsFacade.PostQueuedCompletionStatus(CompletionPortHandle, 0, StopIocpThreads, overlappedPointer);
+                    WindowsFacade.PostQueuedCompletionStatus(CompletionPortHandle, 0, StopIocpThreads,
+                        overlappedPointer);
                     return Unit.Default;
                 })
                 .AsCompletion()
@@ -445,7 +459,6 @@ namespace BraveLantern.Swatcher
                 .ConfigureAwait(false);
         }
 
-
         #endregion
 
         private IObservable<IList<SwatcherCreatedEventArgs>> CreateFinishedCreatedEventWindows(
@@ -472,11 +485,10 @@ namespace BraveLantern.Swatcher
 
         // ReSharper disable once SuggestVarOrType_Elsewhere
         private static unsafe void WatchFolderForChanges(
-            object wrapper, ISwatcherConfig config,
-            IWindowsFacade windowsFacade, SafeFileHandle directoryHandle)
+            ISwatcherConfig config, IWindowsFacade windowsFacade, SafeFileHandle directoryHandle)
         {
-            var result = new SwatcherAsyncResult { Buffer = new byte[DefaultBufferSize] };
-            var overlapped = new Overlapped { AsyncResult = result };
+            var result = new SwatcherAsyncResult {Buffer = new byte[DefaultBufferSize]};
+            var overlapped = new Overlapped {AsyncResult = result};
 
             //the first parameter is null because we're not using IO completion callbacks; they're too slow.
             //we're taking the byte array from our empty byte array and passing that as user data to the overlapped.
@@ -491,7 +503,7 @@ namespace BraveLantern.Swatcher
                 fixed (byte* bufferPointer = result.Buffer)
                 {
                     var bytesReturned = 0;
-                    var bufferHandle = new HandleRef(result, (IntPtr)bufferPointer);
+                    var bufferHandle = new HandleRef(result, (IntPtr) bufferPointer);
                     var isRecursive = Convert.ToInt32(config.IsRecursive);
 
                     //because we're using IO completion ports, we pass our overlapped pointer into this unmanaged 
@@ -499,7 +511,7 @@ namespace BraveLantern.Swatcher
                     //passing the overlapped pointer (which has our IAsyncResult/byte array) back to us.
                     success = windowsFacade.ReadDirectoryChangesW(
                         directoryHandle, bufferHandle, DefaultBufferSize, isRecursive,
-                        (int)config.NotificationTypes, bytesReturned, overlappedPointer, SafeLocalMemHandle.Empty);
+                        (int) config.NotificationTypes, bytesReturned, overlappedPointer, SafeLocalMemHandle.Empty);
 
                     //in this usage of ReadDirectoryChangesW, we should *always* get 0 bytes returned.
                     if (bytesReturned != 0)
@@ -562,18 +574,18 @@ namespace BraveLantern.Swatcher
                 //buffer pointer was the address where we started.
                 //add current offset to get the address of our the next offset.
                 //4 bytes in an integer ;-).
-                nextOffset = *(int*)(bufferPointer + currentOffset);
+                nextOffset = *(int*) (bufferPointer + currentOffset);
                 // the next integer contains the action.
-                @event = *(int*)(bufferPointer + currentOffset + 4);
+                @event = *(int*) (bufferPointer + currentOffset + 4);
                 //next int pointer has the address that contains the length of the name
                 //of the item that was created,changed,renamed or deleted.
-                var nameLength = *(int*)(bufferPointer + currentOffset + 8);
+                var nameLength = *(int*) (bufferPointer + currentOffset + 8);
                 //finally, retrieve the string via char* using the name length from above.
                 //we divide the length by 2 because a char is 2 bytes.
-                name = new string((char*)(bufferPointer + currentOffset + 12), 0, nameLength / 2);
+                name = new string((char*) (bufferPointer + currentOffset + 12), 0, nameLength / 2);
             }
 
-            switch ((FileSystemItemEvent)@event)
+            switch ((FileSystemItemEvent) @event)
             {
                 case FileSystemItemEvent.Created:
                     OnItemCreatedInternal(config, createdSubject, name);
@@ -591,8 +603,9 @@ namespace BraveLantern.Swatcher
                     OnItemRenamedInternal(config, renamedSubject, name, FileSystemItemEvent.RenamedNewName);
                     break;
                 default:
-                    if(config.LoggingEnabled)
-                        Logger.Trace($"[Skipped] An event was skipped because it didn't map to a Swatcher FileSystemEvent. Value={@event}, Name={name ?? "null"}.");
+                    if (config.LoggingEnabled)
+                        Logger.Trace(
+                            $"[Skipped] An event was skipped because it didn't map to a Swatcher FileSystemEvent. Value={@event}, Name={name ?? "null"}.");
                     break;
             }
 
@@ -744,6 +757,7 @@ namespace BraveLantern.Swatcher
                 return true;
             }
         }
+
         private bool IsWatchedItemType(SwatcherEventArgs e, ISwatcherConfig config)
         {
             var itemType = GetItemType(e.FullPath);
