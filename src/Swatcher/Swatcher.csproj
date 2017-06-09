@@ -126,6 +126,7 @@
     <Compile Include="Swatcher.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Config\SwatcherItemTypes.cs" />
+    <Compile Include="SwatcherFolderDeletedException.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />
