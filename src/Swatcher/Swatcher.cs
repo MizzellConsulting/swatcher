@@ -298,6 +298,7 @@ namespace BraveLantern.Swatcher
             await DoSecurityAssertions(Config.PathToWatch).ConfigureAwait(false);
             await SetDirectoryHandle().ConfigureAwait(false);
             await SetCompletionPortHandle(Config.Id ?? -1).ConfigureAwait(false);
+            
 
             var threadPoolSubscription = Observable.Range(1, Environment.ProcessorCount * 2)
                 .Select(threadNumber => new Thread(ThreadPoolWorker()) {Name = $"{threadNumber}"})
@@ -351,8 +352,17 @@ namespace BraveLantern.Swatcher
                             _deletedSubject, _changedSubject, _renamedSubject);
                     }
                 }
+                catch (SwatcherFolderDeletedException e)
+                {
+                    Logger.Trace($"Stopping {Thread.CurrentThread.Name}");
+                    Interlocked.Decrement(ref _runningThreads);
+
+                    Stop().GetAwaiter().GetResult();
+                    throw;
+                }
                 catch (ThreadAbortException)
                 {
+                    Logger.Trace($"Stopping {Thread.CurrentThread.Name}");
                     Interlocked.Decrement(ref _runningThreads);
                 }
             };
@@ -502,7 +512,7 @@ namespace BraveLantern.Swatcher
                 //into this byte array.
                 fixed (byte* bufferPointer = result.Buffer)
                 {
-                    var bytesReturned = 0;
+                    var bytesReturnedNotUsed = 0;
                     var bufferHandle = new HandleRef(result, (IntPtr) bufferPointer);
                     var isRecursive = Convert.ToInt32(config.IsRecursive);
 
@@ -511,11 +521,8 @@ namespace BraveLantern.Swatcher
                     //passing the overlapped pointer (which has our IAsyncResult/byte array) back to us.
                     success = windowsFacade.ReadDirectoryChangesW(
                         directoryHandle, bufferHandle, DefaultBufferSize, isRecursive,
-                        (int) config.NotificationTypes, bytesReturned, overlappedPointer, SafeLocalMemHandle.Empty);
+                        (int) config.NotificationTypes, bytesReturnedNotUsed, overlappedPointer, SafeLocalMemHandle.Empty);
 
-                    //in this usage of ReadDirectoryChangesW, we should *always* get 0 bytes returned.
-                    if (bytesReturned != 0)
-                        Debugger.Break();
                 }
             }
             finally
@@ -536,7 +543,7 @@ namespace BraveLantern.Swatcher
             ISubject<SwatcherEventArgs> changedSubject, ISubject<RenamedInfo> renamedSubject)
         {
             //this is a blocking call...
-            var completionStatus = WaitForCompletionStatus(facade, completionPortHandle);
+            var completionStatus = WaitForCompletionStatus(config, facade, completionPortHandle);
             if (completionStatus == null) return;
 
             var overlapped = Overlapped.Unpack(completionStatus.Value.OverlappedPointer);
@@ -614,7 +621,7 @@ namespace BraveLantern.Swatcher
         }
 
         private static unsafe QueuedCompletionStatus? WaitForCompletionStatus(
-            IWindowsFacade facade, SafeLocalMemHandle completionPortHandle)
+            ISwatcherConfig config, IWindowsFacade facade, SafeLocalMemHandle completionPortHandle)
         {
             uint bytesRead;
             uint completionKey;
@@ -624,21 +631,21 @@ namespace BraveLantern.Swatcher
             //the key is that we provide the completion port handle, which has been bound to the 
             //directory handle being watched (see InitializeCompletionPort() method). we get our change data
             //by passing a pointer by reference to our nativeoverlapped -> IAsyncResult -> buffer. 
-            var result = facade.GetQueuedCompletionStatus(
+            var success = facade.GetQueuedCompletionStatus(
                 completionPortHandle, out bytesRead, out completionKey,
                 &overlappedPointer, InfiniteTimeout);
 
-            //I don't think that this has ever returned false during testing.
-            //if (!result)
-            //    Debugger.Break();
+            if (!success)
+                throw new SwatcherFolderDeletedException(config, facade.GetLastError());
 
             if (completionKey == StopIocpThreads)
             {
-                Logger.Trace($"Stopping {Thread.CurrentThread.Name}");
                 Thread.CurrentThread.Abort();
                 return null;
             }
-            if (bytesRead == 0) return null;
+
+            if (bytesRead == 0)
+                return null;
 
             return new QueuedCompletionStatus()
             {
