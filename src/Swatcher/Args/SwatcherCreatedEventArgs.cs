@@ -16,7 +16,6 @@ namespace BraveLantern.Swatcher.Args
         /// </summary>
         /// <param name="config">The configuration for the <see cref="Swatcher"/>that created this instance.</param>
         /// <param name="name">The name of the file system item that was created.</param>
-        /// <param name="isCompleted">Indicated whether or not the <see cref="TimeCompleted"/> and <see cref="Duration"/> properties should be populated.</param>
         public SwatcherCreatedEventArgs(ISwatcherConfig config, string name)
             : base(config,WatcherChangeTypes.Created, name)
         {}

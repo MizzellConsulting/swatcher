@@ -9,6 +9,7 @@ using System.Security.Permissions;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Win32.SafeHandles;
+#pragma warning disable 1591
 
 namespace BraveLantern.Swatcher.Native
 {

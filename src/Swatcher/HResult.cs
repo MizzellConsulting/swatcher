@@ -1,6 +1,6 @@
 ﻿using System;
 using System.ComponentModel;
-
+#pragma warning disable 1591
 // ReSharper disable InconsistentNaming
 
 namespace BraveLantern.Swatcher

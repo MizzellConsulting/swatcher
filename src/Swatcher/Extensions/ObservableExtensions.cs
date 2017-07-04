@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reactive;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
+#pragma warning disable 1591
 
 namespace BraveLantern.Swatcher.Extensions
 {

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using BraveLantern.Swatcher.Logging;
+#pragma warning disable 1591
 
 namespace BraveLantern.Swatcher
 {
