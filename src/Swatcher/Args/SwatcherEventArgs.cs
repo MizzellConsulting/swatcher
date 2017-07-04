@@ -22,7 +22,7 @@ namespace BraveLantern.Swatcher.Args
             Name = name;
             TimeOccurred = DateTime.UtcNow;
             EventId = Guid.NewGuid();
-            FullPath = config.PathToWatch + name;
+            FullPath = string.Concat(config.PathToWatch,name);
         }
 
         /// <summary>

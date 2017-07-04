@@ -22,8 +22,14 @@ using BraveLantern.Swatcher.Native;
 
 namespace BraveLantern.Swatcher
 {
+    /// <summary>
+    /// Class Swatcher. This class cannot be inherited.
+    /// </summary>
+    /// <seealso cref="BraveLantern.Swatcher.ISwatcher" />
     public sealed class Swatcher : ISwatcher
     {
+        #region Public Properties
+
         /// <summary>
         ///     Gets a value indicating whether this instance is disposed.
         /// </summary>
@@ -35,20 +41,76 @@ namespace BraveLantern.Swatcher
         /// </summary>
         /// <value><c>true</c> if this instance is running; otherwise, <c>false</c>.</value>
         public bool IsRunning { get; private set; }
+        /// <summary>
+        /// Gets a stream of <see cref="SwatcherEventArgs" /> that are pushed when a <b>change</b> event occurs.
+        /// </summary>
+        /// <value>The <see cref="SwatcherEventArgs" /> meta for a <b>change</b> event.</value>
         public IObservable<SwatcherEventArgs> Changed { get; private set; }
+        /// <summary>
+        /// Gets a stream of <see cref="SwatcherCreatedEventArgs" /> that are pushed when a <b>created</b> event occurs.
+        /// </summary>
+        /// <value>The <see cref="SwatcherCreatedEventArgs" /> meta for a <b>created</b> event.</value>
         public IObservable<SwatcherCreatedEventArgs> Created { get; private set; }
+        /// <summary>
+        /// Gets a stream of <see cref="SwatcherEventArgs" /> that are pushed when a <b>deleted</b> event occurs.
+        /// </summary>
+        /// <value>The <see cref="SwatcherEventArgs" /> meta for a <b>deleted</b> event.</value>
         public IObservable<SwatcherEventArgs> Deleted { get; private set; }
+        /// <summary>
+        /// Gets a stream of <see cref="SwatcherRenamedEventArgs" /> that are pushed when a <b>renamed</b> event occurs.
+        /// </summary>
+        /// <value>The <see cref="SwatcherRenamedEventArgs" /> meta for a <b>renamed</b> event.</value>
         public IObservable<SwatcherRenamedEventArgs> Renamed { get; private set; }
+        /// <summary>
+        /// Gets a stream of <see cref="SwatcherException" /> that are pushed when a <see cref="ISwatcher" /> encounters an internal exception.
+        /// </summary>
+        /// <value>The <see cref="SwatcherException" /> that descibes the exception.</value>
+        /// <remarks>Immediately prior to pushing an exception onto the stream, <see cref="ISwatcher.Stop" /> will be called which will do the following:
+        /// <list type="bullet"><item><description>Complete the streams on the <see cref="ISwatcherRx" /> interface.</description></item><item><description>Remove event handlers for the <see cref="ISwatcherEvents" /> interface.</description></item></list>
+        /// NOTE: While it is possible to restart the <see cref="ISwatcher" />, it is highly recommended to call <see cref="IDisposable.Dispose" /> and create a new instance.</remarks>
+        public IObservable<SwatcherException> Exception { get; private set; }
+        /// <summary>
+        /// Provides notifications when a <b>change</b> event occurs.
+        /// </summary>
+        /// <value>The <see cref="SwatcherEventArgs" /> meta for a <b>change</b> event.</value>
         public event EventHandler<SwatcherEventArgs> ItemChanged;
+        /// <summary>
+        /// Provides notifications when a <b>created</b> event occurs.
+        /// </summary>
+        /// <value>The <see cref="SwatcherCreatedEventArgs" /> meta for a <b>created</b> event.</value>
         public event EventHandler<SwatcherCreatedEventArgs> ItemCreated;
+        /// <summary>
+        /// Provides notifications when a <b>deleted</b> event occurs.
+        /// </summary>
+        /// <value>The <see cref="SwatcherEventArgs" /> meta for a <b>deleted</b> event.</value>
         public event EventHandler<SwatcherEventArgs> ItemDeleted;
+        /// <summary>
+        /// Provides notifications when a <b>renamed</b> event occurs.
+        /// </summary>
+        /// <value>The <see cref="SwatcherRenamedEventArgs" /> meta for a <b>renamed</b> event.</value>
         public event EventHandler<SwatcherRenamedEventArgs> ItemRenamed;
+        /// <summary>
+        /// Provides notifications when an internal exception is encountered. See <see cref="ISwatcherRx.Exception" />.
+        /// </summary>
+        public event EventHandler<SwatcherException> ItemException;
 
-        public Swatcher(ISwatcherConfig config):this(config,new WindowsFacade()) { }
+        #endregion
+
+        #region Constructors
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="Swatcher"/> class.
+        /// </summary>
+        /// <param name="config">The configuration for this <see cref="Swatcher"/> instance.</param>
+        public Swatcher(ISwatcherConfig config) : this(config, new WindowsFacade()) { }
+
         internal Swatcher(ISwatcherConfig config, IWindowsFacade windowsFacade)
         {
             Config = config;
             WindowsFacade = windowsFacade;
+
+
+            NotificationStream = CreateNotificationStream();
 
             var createdEventStream = CreateCreatedEventStream();
             var finishedCreatedEventStream = CreateFinishedCreatedEventStream(createdEventStream);
@@ -63,13 +125,14 @@ namespace BraveLantern.Swatcher
             var changedEventStream = CreateChangedEventStream();
             var changedEventWindows = CreatedChangedEventWindows(changedEventStream);
 
+            Exception = _exceptionSubject.AsObservable().Publish().RefCount();
             Renamed = CreatePublicRenamedStream(Config);
             Deleted = CreatePublicDeletedStream();
             Created = CreatePublicCreatedStream(finishedCreatedEventStream);
             Changed = CreatePublicChangedStream(changedEventStream,
                 changedEventWindows, createdEventWindows, finishedCreatedEventWindows);
 
-            ChangedEventPatternSource = 
+            ChangedEventPatternSource =
                 Changed.Select(x => new EventPattern<SwatcherEventArgs>(this, x)).ToEventPattern();
             ChangedEventPatternSource.OnNext += OnItemChanged;
 
@@ -84,14 +147,54 @@ namespace BraveLantern.Swatcher
             RenamedEventPatternSource =
                 Renamed.Select(x => new EventPattern<SwatcherRenamedEventArgs>(this, x)).ToEventPattern();
             RenamedEventPatternSource.OnNext += OnItemRenamed;
+
+            ExceptionEventPatternSource =
+                Exception.Select(x => new EventPattern<SwatcherException>(this, x)).ToEventPattern();
+        }
+
+        #endregion
+
+        #region Stream Creation Methods
+
+        private IObservable<EventNotification> CreateNotificationStream()
+        {
+            return Observable.Create<EventNotification>(observer =>
+                {
+                    return _startThreadPoolSubject.Subscribe(_ =>
+                    {
+
+                        Observable.Range(1, Environment.ProcessorCount * 2)
+                            .ObserveOn(NewThreadScheduler.Default)
+                            .Select(StartSwatcherThread)
+                            .Merge()
+                            //if the user stops this swatcher, gracefully catch the thread abortion and complete the sequence.
+                            .Catch<EventNotification, ThreadAbortException>(__ => Observable
+                                .Empty<EventNotification>())
+                            .Subscribe(observer.OnNext,
+                                async e =>
+                                {
+                                    observer.OnCompleted();
+
+                                    await Stop().ConfigureAwait(false);
+
+                                    _exceptionSubject.OnNext((SwatcherException)e);
+                                });
+                    });
+                })
+                .Publish()
+                .RefCount();
+
         }
 
         private IObservable<SwatcherRenamedEventArgs> CreatePublicRenamedStream(ISwatcherConfig config)
         {
-             return _renamedSubject.AsObservable()
+            return NotificationStream
+                .WithConfiguredEventTypes(FileSystemItemEvent.RenamedNewName, FileSystemItemEvent.RenamedOldName)
+                .WithConfiguredItemTypes(Config)
+                .Where(x => Config.ChangeTypes.HasFlag(WatcherChangeTypes.Renamed))
                 .CombineWithPrevious((previous, current) =>
                 {
-                    if ((previous?.Event == FileSystemItemEvent.RenamedOldName) &&
+                    if ((previous.Event == FileSystemItemEvent.RenamedOldName) &&
                         (current.Event == FileSystemItemEvent.RenamedNewName))
                         return new SwatcherRenamedEventArgs(config, current.Name, previous.Name);
 
@@ -101,6 +204,7 @@ namespace BraveLantern.Swatcher
                 .Do(x =>
                 {
                     if (!Config.LoggingEnabled) return;
+
                     Logger.Debug(
                         $"[Renamed] OldName: {x.OldName}, Name: {x.Name}, OccurredAt:{x.TimeOccurred.ToLocalTime()}");
                 })
@@ -110,8 +214,11 @@ namespace BraveLantern.Swatcher
 
         private IObservable<SwatcherEventArgs> CreatePublicDeletedStream()
         {
-            return _deletedSubject.AsObservable()
-                .SelectConfiguredItemTypes(Config)
+            return NotificationStream
+                .WithConfiguredEventTypes(FileSystemItemEvent.Deleted)
+                .WithConfiguredItemTypes(Config)
+                .Where(x => Config.ChangeTypes.HasFlag(WatcherChangeTypes.Deleted))
+                .Select(x => new SwatcherEventArgs(Config, WatcherChangeTypes.Deleted, x.Name))
                 .Do(x =>
                 {
                     if (!Config.LoggingEnabled) return;
@@ -142,39 +249,45 @@ namespace BraveLantern.Swatcher
 
         private IObservable<SwatcherCreatedEventArgs> CreateCreatedEventStream()
         {
-            return _createdSubject.AsObservable()
-                .SelectConfiguredItemTypes(Config)
+            return NotificationStream
+                .WithConfiguredEventTypes(FileSystemItemEvent.Created)
+                .WithConfiguredItemTypes(Config)
+                .Where(x => Config.ChangeTypes.HasFlag(WatcherChangeTypes.Created))
+                .Select(x => new SwatcherCreatedEventArgs(Config, x.Name))
                 .Do(x => CreatedEventsInProgress.Add(x.FullPath))
                 .Publish()
                 .RefCount();
         }
 
         private IObservable<SwatcherCreatedEventArgs> CreateFinishedCreatedEventStream(
-            IObservable<SwatcherCreatedEventArgs> createdEventStream )
+            IObservable<SwatcherCreatedEventArgs> createdEventStream)
         {
             return Observable.Create<SwatcherCreatedEventArgs>(observer =>
-            {
-                return
-                    createdEventStream
-                        .SelectConfiguredItemTypes(Config)
-                        .Select(x =>
+                {
+                    return
+                        createdEventStream
+                            .Select(x =>
                                 Observable.Interval(OneSecond, ThreadPoolScheduler.Instance)
                                     .StartWith(-1L)
                                     .SkipWhile(_ => IsFileLocked(x.FullPath))
                                     .Take(1)
                                     .Do(_ => x.MarkCompleted())
                                     .Select(_ => x)
-                        )
-                        .Merge()
-                        .Subscribe(observer);
-            })
+                            )
+                            .Merge()
+                            .SubscribeSafe(observer);
+                })
                 .Publish()
                 .RefCount();
         }
 
         private IObservable<SwatcherEventArgs> CreateChangedEventStream()
         {
-            return _changedSubject.AsObservable()
+            return NotificationStream
+                .WithConfiguredEventTypes(FileSystemItemEvent.Changed)
+                .WithConfiguredItemTypes(Config)
+                .Where(x => Config.ChangeTypes.HasFlag(WatcherChangeTypes.Changed))
+                .Select(x => new SwatcherEventArgs(Config, WatcherChangeTypes.Changed, x.Name))
                 .Delay(TimeSpan.FromMilliseconds(250))
                 .Publish()
                 .RefCount();
@@ -269,8 +382,35 @@ namespace BraveLantern.Swatcher
                     .Select(x => x.Changed);
         }
 
+        private IObservable<IList<SwatcherCreatedEventArgs>> CreateFinishedCreatedEventWindows(
+            IObservable<SwatcherCreatedEventArgs> finishedCreatedEventStream)
+        {
+            return finishedCreatedEventStream
+                .Buffer(OneSecond, QuarterSecond)
+                .CombineWithPreviousBuffer()
+                .Publish()
+                .RefCount();
+        }
+
+        private IObservable<IList<SwatcherCreatedEventArgs>> CreateCreatedEventWindowStream(
+            IObservable<SwatcherCreatedEventArgs> createdEventStream)
+        {
+            return createdEventStream
+                .Buffer(OneSecond, QuarterSecond)
+                .CombineWithPreviousBuffer()
+                .Publish()
+                .RefCount();
+        }
+
+        #endregion
+
         #region Start & Stop
 
+        /// <summary>
+        /// Causes the <see cref="ISwatcher" /> to start listening for file system events.
+        /// </summary>
+        /// <returns>Task.</returns>
+        /// <exception cref="ObjectDisposedException"></exception>
         public async Task Start()
         {
             if (IsDisposed)
@@ -282,25 +422,30 @@ namespace BraveLantern.Swatcher
             TokenSource = new CancellationTokenSource();
             CreatedEventsInProgress = new HashSet<string>();
 
-                await DoSecurityAssertions(Config.PathToWatch).ConfigureAwait(false);
-                await SetDirectoryHandle().ConfigureAwait(false);
-                await SetCompletionPortHandle(Config.Id ?? -1).ConfigureAwait(false);
-            
-                var threadPoolSubscription = Observable.Range(1, Environment.ProcessorCount*2)
-                    .Select(threadNumber => new Thread(ThreadPoolWorker()) { Name = $"{threadNumber}" })
-                    .Subscribe(t => t.Start(TokenSource.Token));
+            await DoSecurityAssertions(Config.PathToWatch).ConfigureAwait(false);
+            await SetDirectoryHandle().ConfigureAwait(false);
+            await SetCompletionPortHandle(Config.Id ?? -1).ConfigureAwait(false);
 
-                Disposables = new CompositeDisposable()
-                {
-                    threadPoolSubscription,
-                    CompletionPortHandle,
-                    DirectoryHandle,
-                };
+            _startThreadPoolSubject.OnNext(Unit.Default);
 
-                if(Config.LoggingEnabled)
-                    Logger.Info($"Swatcher has started");
+            Disposables = new CompositeDisposable()
+            {
+                CompletionPortHandle,
+                DirectoryHandle,
+            };
+
+            if (Config.LoggingEnabled)
+                Logger.Info($"Swatcher has started");
         }
 
+        /// <summary>
+        /// Causes the <see cref="ISwatcher" /> to stop listening for file system events.
+        /// </summary>
+        /// <returns>Task.</returns>
+        /// <remarks>If a long running file copy|create|upload operation was in progress when
+        /// the <see cref="Stop" /> method is called, the <see cref="ISwatcherRx.Created" /> stream will still notify subscribers when that
+        /// operation is completed as long as the subscription is in place and the <see cref="IDisposable.Dispose" /> method
+        /// has not been called.</remarks>
         public async Task Stop()
         {
             await Task.Run(() =>
@@ -318,32 +463,54 @@ namespace BraveLantern.Swatcher
                 .ConfigureAwait(false);
         }
 
-        private ParameterizedThreadStart ThreadPoolWorker()
+
+        private IObservable<EventNotification> StartSwatcherThread(int threadNumber)
         {
-            return parameter =>
-            {
-                try
+            return Observable.Create<EventNotification>(observer =>
                 {
-                    if(Config.LoggingEnabled)
-                        Logger.Info($"Starting Thread {Thread.CurrentThread.Name}");
+                    //first, we bind to folder change notifications.
+                    var folderChangeBindingStream = Observable.Repeat(Unit.Default)
+                        .Select(_ => SubscribeToFolderChanges(Config, WindowsFacade, DirectoryHandle))
+                        .Publish()
+                        .RefCount();
+                    //if we successfully bound to folder changes, try to wait for notification callbacks.
+                    var notificationStream = folderChangeBindingStream
+                        .WhereTrue()
+                        //this is a blocking call.
+                        .Select(_ => OnNativeNotification(Config, WindowsFacade, CompletionPortHandle))
+                        .Where(x => x.HasValue)
+                        .Select(x => x.Value)
+                        .Publish()
+                        .RefCount();
 
-                    Interlocked.Increment(ref _runningThreads);
+                    //this is our happy path
+                    var notificationSuccessSubscription = notificationStream
+                        .Where(x => x.WasSuccessful)
+                        .MapToEventNotification()
+                        .SubscribeSafe(observer);
 
-                    var token = (CancellationToken)parameter;
-                    while (!token.IsCancellationRequested)
-                    {
-                        WatchFolderForChanges(this, Config, WindowsFacade, DirectoryHandle);
-                        DoQueuedCompletionWork(
-                            Config, WindowsFacade, CompletionPortHandle, _createdSubject,
-                            _deletedSubject, _changedSubject, _renamedSubject);
-                    }
-                }
-                catch (ThreadAbortException)
+                    //if the folder change binding or wait for notifications call fails...we're done.
+                    var failureSubscription = Observable.Merge(
+                        folderChangeBindingStream.WhereFalse(),
+                        notificationStream.Where(x => !x.WasSuccessful).Select(_ => false))
+                        .Take(1)
+                        .Subscribe(_ =>
+                        {
+                            observer.OnError(new SwatcherException(Config, WindowsFacade.GetLastError()));
+                        });
+
+                    return new CompositeDisposable(notificationSuccessSubscription, failureSubscription);
+                })
+                .Finally(() =>
                 {
+                    if (Config.LoggingEnabled)
+                        Logger.Trace($"{Thread.CurrentThread.Name} Stopped.");
+
                     Interlocked.Decrement(ref _runningThreads);
-                }
-            };
+                });
         }
+
+
 
         private unsafe void SignalWorkerThreadsToStop()
         {
@@ -351,8 +518,8 @@ namespace BraveLantern.Swatcher
                 .TakeWhile(_ => _runningThreads > 0)
                 .Select(_ =>
                 {
-                    var result = new SwatcherAsyncResult {Buffer = new byte[0]};
-                    var overlapped = new Overlapped {AsyncResult = result};
+                    var result = new SwatcherAsyncResult { Buffer = new byte[0] };
+                    var overlapped = new Overlapped { AsyncResult = result };
 
                     //the first parameter is null because we're not using IO completion callbacks; they're too slow.
                     //we're taking the byte array from our empty byte array and passing that as user data to the overlapped.
@@ -360,7 +527,7 @@ namespace BraveLantern.Swatcher
                     //when using IOCPs, we can send our own custom messages to the GetQueuedCompletionStatus
                     //method by call PostQueuedCompletionStatus. In this case, we want to stop the threads that are
                     //waiting on change events, so we will send a custom completion key "StopIocpThreads".
-                    WindowsFacade.PostQueuedCompletionStatus(CompletionPortHandle, 0, StopIocpThreads, overlappedPointer);
+                    WindowsFacade.PostQueuedCompletionStatus(CompletionPortHandle, 0, Constants.StopIocpThreads, overlappedPointer);
                     return Unit.Default;
                 })
                 .AsCompletion()
@@ -387,7 +554,7 @@ namespace BraveLantern.Swatcher
                     //is the number of CPUs on the machine.
                     var pointer = WindowsFacade.CreateIoCompletionPort(
                         DirectoryHandle, SafeLocalMemHandle.Empty,
-                        (uint) completionKey, (uint) Environment.ProcessorCount);
+                        (uint)completionKey, (uint)Environment.ProcessorCount);
 
                     CompletionPortHandle = new SafeLocalMemHandle(pointer);
                 })
@@ -447,35 +614,14 @@ namespace BraveLantern.Swatcher
 
 
         #endregion
-
-        private IObservable<IList<SwatcherCreatedEventArgs>> CreateFinishedCreatedEventWindows(
-            IObservable<SwatcherCreatedEventArgs> finishedCreatedEventStream)
-        {
-            return finishedCreatedEventStream
-                .Buffer(OneSecond, QuarterSecond)
-                .CombineWithPreviousBuffer()
-                .Publish()
-                .RefCount();
-        }
-
-        private IObservable<IList<SwatcherCreatedEventArgs>> CreateCreatedEventWindowStream(
-            IObservable<SwatcherCreatedEventArgs> createdEventStream)
-        {
-            return createdEventStream
-                .Buffer(OneSecond, QuarterSecond)
-                .CombineWithPreviousBuffer()
-                .Publish()
-                .RefCount();
-        }
-
+        
         #region Native Methods
 
         // ReSharper disable once SuggestVarOrType_Elsewhere
-        private static unsafe void WatchFolderForChanges(
-            object wrapper, ISwatcherConfig config,
-            IWindowsFacade windowsFacade, SafeFileHandle directoryHandle)
+        private static unsafe bool SubscribeToFolderChanges(
+            ISwatcherConfig config, IWindowsFacade windowsFacade, SafeFileHandle directoryHandle)
         {
-            var result = new SwatcherAsyncResult { Buffer = new byte[DefaultBufferSize] };
+            var result = new SwatcherAsyncResult { Buffer = new byte[Constants.DefaultBufferSize] };
             var overlapped = new Overlapped { AsyncResult = result };
 
             //the first parameter is null because we're not using IO completion callbacks; they're too slow.
@@ -490,7 +636,7 @@ namespace BraveLantern.Swatcher
                 //into this byte array.
                 fixed (byte* bufferPointer = result.Buffer)
                 {
-                    var bytesReturned = 0;
+                    var bytesReturnedNotUsed = 0;
                     var bufferHandle = new HandleRef(result, (IntPtr)bufferPointer);
                     var isRecursive = Convert.ToInt32(config.IsRecursive);
 
@@ -498,110 +644,25 @@ namespace BraveLantern.Swatcher
                     //call. when a change has been received, the OS will callback via GetQueuedCompletionStatus
                     //passing the overlapped pointer (which has our IAsyncResult/byte array) back to us.
                     success = windowsFacade.ReadDirectoryChangesW(
-                        directoryHandle, bufferHandle, DefaultBufferSize, isRecursive,
-                        (int)config.NotificationTypes, bytesReturned, overlappedPointer, SafeLocalMemHandle.Empty);
-
-                    //in this usage of ReadDirectoryChangesW, we should *always* get 0 bytes returned.
-                    if (bytesReturned != 0)
-                        Debugger.Break();
+                        directoryHandle, bufferHandle, Constants.DefaultBufferSize, isRecursive,
+                        (int)config.NotificationTypes, bytesReturnedNotUsed, overlappedPointer, SafeLocalMemHandle.Empty);
                 }
+
+                return success;
             }
             finally
             {
-                //if success is false, our directory handle has likely become invalid. attempt to re-establish it.
+                //if success is false, our directory handle has likely become invalid. 
                 if (!success)
                 {
-                    Debugger.Break();
                     //before doing anything else, cleanup here to prevent memory leaks.
                     Overlapped.Free(overlappedPointer);
                 }
             }
         }
 
-        private static unsafe void DoQueuedCompletionWork(
-            ISwatcherConfig config, IWindowsFacade facade, SafeLocalMemHandle completionPortHandle,
-            ISubject<SwatcherCreatedEventArgs> createdSubject, ISubject<SwatcherEventArgs> deletedSubject,
-            ISubject<SwatcherEventArgs> changedSubject, ISubject<RenamedInfo> renamedSubject)
-        {
-            //this is a blocking call...
-            var completionStatus = WaitForCompletionStatus(facade, completionPortHandle);
-            if (completionStatus == null) return;
-
-            var overlapped = Overlapped.Unpack(completionStatus.Value.OverlappedPointer);
-            var asyncResult = (SwatcherAsyncResult) overlapped.AsyncResult;
-            var currentOffset = 0;
-            // ReSharper disable once TooWideLocalVariableScope
-            var nextOffset = 0;
-            try
-            {
-                do
-                {
-                    nextOffset = DeserializeMessage(
-                        config, asyncResult, ref currentOffset, createdSubject,
-                        deletedSubject, changedSubject, renamedSubject);
-                } while (nextOffset != 0);
-            }
-            finally
-            {
-                //*always* free up the overlapped. otherwise, we will have a ~65kb memory leak after each callback.
-                Overlapped.Free(completionStatus.Value.OverlappedPointer);
-            }
-        }
-
-        private static unsafe int DeserializeMessage(
-            ISwatcherConfig config, SwatcherAsyncResult asyncResult, ref int currentOffset,
-            ISubject<SwatcherCreatedEventArgs> createdSubject, ISubject<SwatcherEventArgs> deletedSubject,
-            ISubject<SwatcherEventArgs> changedSubject, ISubject<RenamedInfo> renamedSubject)
-        {
-            int nextOffset;
-            string name;
-            int @event;
-
-            fixed (byte* bufferPointer = asyncResult.Buffer)
-            {
-                //buffer pointer was the address where we started.
-                //add current offset to get the address of our the next offset.
-                //4 bytes in an integer ;-).
-                nextOffset = *(int*)(bufferPointer + currentOffset);
-                // the next integer contains the action.
-                @event = *(int*)(bufferPointer + currentOffset + 4);
-                //next int pointer has the address that contains the length of the name
-                //of the item that was created,changed,renamed or deleted.
-                var nameLength = *(int*)(bufferPointer + currentOffset + 8);
-                //finally, retrieve the string via char* using the name length from above.
-                //we divide the length by 2 because a char is 2 bytes.
-                name = new string((char*)(bufferPointer + currentOffset + 12), 0, nameLength / 2);
-            }
-
-            switch ((FileSystemItemEvent)@event)
-            {
-                case FileSystemItemEvent.Created:
-                    OnItemCreatedInternal(config, createdSubject, name);
-                    break;
-                case FileSystemItemEvent.Deleted:
-                    OnItemDeletedInternal(config, deletedSubject, name);
-                    break;
-                case FileSystemItemEvent.Changed:
-                    OnItemChangedInternal(config, changedSubject, name);
-                    break;
-                case FileSystemItemEvent.RenamedOldName:
-                    OnItemRenamedInternal(config, renamedSubject, name, FileSystemItemEvent.RenamedOldName);
-                    break;
-                case FileSystemItemEvent.RenamedNewName:
-                    OnItemRenamedInternal(config, renamedSubject, name, FileSystemItemEvent.RenamedNewName);
-                    break;
-                default:
-                    if(config.LoggingEnabled)
-                        Logger.Trace($"[Skipped] An event was skipped because it didn't map to a Swatcher FileSystemEvent. Value={@event}, Name={name ?? "null"}.");
-                    break;
-            }
-
-            currentOffset += nextOffset;
-            return nextOffset;
-        }
-
-        private static unsafe QueuedCompletionStatus? WaitForCompletionStatus(
-            IWindowsFacade facade, SafeLocalMemHandle completionPortHandle)
+        internal static unsafe QueuedCompletionStatus? OnNativeNotification(
+            ISwatcherConfig config, IWindowsFacade facade, SafeLocalMemHandle completionPortHandle)
         {
             uint bytesRead;
             uint completionKey;
@@ -611,70 +672,26 @@ namespace BraveLantern.Swatcher
             //the key is that we provide the completion port handle, which has been bound to the 
             //directory handle being watched (see InitializeCompletionPort() method). we get our change data
             //by passing a pointer by reference to our nativeoverlapped -> IAsyncResult -> buffer. 
-            var result = facade.GetQueuedCompletionStatus(
+            var success = facade.GetQueuedCompletionStatus(
                 completionPortHandle, out bytesRead, out completionKey,
-                &overlappedPointer, InfiniteTimeout);
+                &overlappedPointer, Constants.InfiniteTimeout);
 
-            //I don't think that this has ever returned false during testing.
-            //if (!result)
-            //    Debugger.Break();
+            if (!success)
+                return new QueuedCompletionStatus(overlappedPointer, completionKey, bytesRead, false);
 
-            if (completionKey == StopIocpThreads)
-            {
-                Logger.Trace($"Stopping {Thread.CurrentThread.Name}");
+            if (completionKey == Constants.StopIocpThreads)
                 Thread.CurrentThread.Abort();
-                return null;
-            }
-            if (bytesRead == 0) return null;
 
-            return new QueuedCompletionStatus()
-            {
-                BytesRead = bytesRead,
-                CompletionKey = completionKey,
-                OverlappedPointer = overlappedPointer
-            };
+            if (bytesRead == 0)
+                return null;
+
+            return new QueuedCompletionStatus(overlappedPointer, completionKey, bytesRead, success);
         }
+
 
         #endregion
 
         #region Dispatcher Methods
-
-        private static void OnItemRenamedInternal(ISwatcherConfig config,
-            ISubject<RenamedInfo> renamedSubject, string name, FileSystemItemEvent @event)
-        {
-            if (!config.ChangeTypes.HasFlag(WatcherChangeTypes.Renamed)) return;
-
-            renamedSubject.OnNext(new RenamedInfo
-            {
-                Name = name,
-                Event = @event
-            });
-        }
-
-        private static void OnItemChangedInternal(ISwatcherConfig config, ISubject<SwatcherEventArgs> changedSubject,
-            string name)
-        {
-            if (config.ChangeTypes.HasFlag(WatcherChangeTypes.Changed))
-                changedSubject.OnNext(
-                    new SwatcherEventArgs(config, WatcherChangeTypes.Changed, name));
-        }
-
-        private static void OnItemDeletedInternal(ISwatcherConfig config, ISubject<SwatcherEventArgs> deletedSubject,
-            string name)
-        {
-            if (config.ChangeTypes.HasFlag(WatcherChangeTypes.Deleted))
-                deletedSubject.OnNext(
-                    new SwatcherEventArgs(config, WatcherChangeTypes.Deleted, name));
-        }
-
-        private static void OnItemCreatedInternal(ISwatcherConfig config,
-            ISubject<SwatcherCreatedEventArgs> createdSubject,
-            string name)
-        {
-            if (config.ChangeTypes.HasFlag(WatcherChangeTypes.Created))
-                createdSubject.OnNext(
-                    new SwatcherCreatedEventArgs(config, name));
-        }
 
         private void OnItemRenamed(object sender, SwatcherRenamedEventArgs e)
         {
@@ -696,6 +713,11 @@ namespace BraveLantern.Swatcher
             ItemChanged?.Invoke(sender, e);
         }
 
+        private void OnItemException(object sender, SwatcherException e)
+        {
+            ItemException?.Invoke(sender,e);
+        }
+
         #endregion
 
         #region Private Fields & Properties
@@ -703,16 +725,15 @@ namespace BraveLantern.Swatcher
         private static readonly ILog Logger = LogProvider.GetCurrentClassLogger();
         private static readonly TimeSpan QuarterSecond = TimeSpan.FromMilliseconds(500);
         private static readonly TimeSpan OneSecond = TimeSpan.FromSeconds(1);
-        private static readonly TimeSpan ThreeSeconds = TimeSpan.FromSeconds(3);
-        private readonly ISubject<SwatcherEventArgs> _changedSubject = new Subject<SwatcherEventArgs>();
-        private readonly ISubject<SwatcherCreatedEventArgs> _createdSubject = new Subject<SwatcherCreatedEventArgs>();
-        private readonly ISubject<SwatcherEventArgs> _deletedSubject = new Subject<SwatcherEventArgs>();
-        private readonly ISubject<RenamedInfo> _renamedSubject = new Subject<RenamedInfo>();
+        private readonly ISubject<Unit> _startThreadPoolSubject = new Subject<Unit>();
+        private readonly ISubject<SwatcherException> _exceptionSubject = new Subject<SwatcherException>();
         private int _runningThreads;
+        private IObservable<EventNotification> NotificationStream { get; set; }
         private IEventPatternSource<SwatcherEventArgs> ChangedEventPatternSource { get; set; }
         private IEventPatternSource<SwatcherEventArgs> DeletedEventPatternSource { get; set; }
         private IEventPatternSource<SwatcherRenamedEventArgs> RenamedEventPatternSource { get; set; }
         private IEventPatternSource<SwatcherCreatedEventArgs> CreatedEventPatternSource { get; set; }
+        private IEventPatternSource<SwatcherException> ExceptionEventPatternSource { get; set; }
         private CancellationTokenSource TokenSource { get; set; }
         private ISwatcherConfig Config { get; }
         private IWindowsFacade WindowsFacade { get; }
@@ -720,9 +741,7 @@ namespace BraveLantern.Swatcher
         private SafeLocalMemHandle CompletionPortHandle { get; set; }
         private HashSet<string> CreatedEventsInProgress { get; set; }
         private CompositeDisposable Disposables { get; set; }
-        private const int DefaultBufferSize = 16384;
-        private const uint StopIocpThreads = 0x7FFFFFFF;
-        private const uint InfiniteTimeout = 0xFFFFFFFF;
+
 
         #endregion
 
@@ -773,7 +792,7 @@ namespace BraveLantern.Swatcher
             //If a file has been deleted, the previous will not work and we only have the path to work with.
             var fileName = Path.GetFileName(fullPath);
 
-            return string.IsNullOrWhiteSpace(
+            return String.IsNullOrWhiteSpace(
                 Path.GetExtension(fileName))
                 ? SwatcherItemTypes.Folder
                 : SwatcherItemTypes.File;
@@ -781,6 +800,9 @@ namespace BraveLantern.Swatcher
 
         #endregion
 
+        /// <summary>
+        /// Performs application-defined tasks associated with freeing, releasing, or resetting unmanaged resources.
+        /// </summary>
         public void Dispose()
         {
             Stop().GetAwaiter().GetResult();
@@ -789,6 +811,7 @@ namespace BraveLantern.Swatcher
             DeletedEventPatternSource.OnNext -= OnItemDeleted;
             RenamedEventPatternSource.OnNext -= OnItemRenamed;
             CreatedEventPatternSource.OnNext -= OnItemCreated;
+            ExceptionEventPatternSource.OnNext -= OnItemException;
 
             IsDisposed = true;
         }

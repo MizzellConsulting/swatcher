@@ -3,6 +3,7 @@ using System.IO;
 using System.Reactive.Disposables;
 using BraveLantern.Swatcher;
 using BraveLantern.Swatcher.Config;
+using BraveLantern.Swatcher.Logging;
 
 namespace ReactiveHelloWorld
 {
@@ -20,39 +21,49 @@ namespace ReactiveHelloWorld
             //NOTE: you will get logging message output to the console if you enabled logging in the Swatcher config.
             //put your business logic in the handlers below and you're good to go.
             swatcher.Changed.Subscribe(x =>
-                {
-                    if (config.LoggingEnabled) return;
-
-                    Console.WriteLine($"[Changed] Name: {x.Name}, OccurredAt:{x.TimeOccurred.ToLocalTime()}");
-                })
+                    {
+                        if (config.LoggingEnabled) return;
+                        Console.WriteLine($"[Changed] Name: {x.Name}, OccurredAt:{x.TimeOccurred.ToLocalTime()}");
+                    },
+                    () => Console.WriteLine("The changed stream has completed."))
                 .DisposeWith(disposables);
 
             swatcher.Created.Subscribe(x =>
-                {
-                    if (config.LoggingEnabled) return;
-                    var processingTime = x.Duration.Seconds > 1
-                        ? $"{x.Duration.Seconds} sec"
-                        : $"{x.Duration.Milliseconds} ms";
+                    {
+                        if (config.LoggingEnabled) return;
+                        var processingTime = x.Duration.Seconds > 1
+                            ? $"{x.Duration.Seconds} sec"
+                            : $"{x.Duration.Milliseconds} ms";
 
-                    Console.WriteLine(
-                        $"[Created] Name: {x.Name}, OccurredAt:{x.TimeOccurred.ToLocalTime()}, ProcessingTime: {processingTime}");
-                })
+                        Console.WriteLine(
+                            $"[Created] Name: {x.Name}, OccurredAt:{x.TimeOccurred.ToLocalTime()}, ProcessingTime: {processingTime}");
+                    },
+                    () => Console.WriteLine("The created stream has completed."))
                 .DisposeWith(disposables);
 
             swatcher.Deleted.Subscribe(x =>
-                {
-                    if (config.LoggingEnabled) return;
-                    Console.WriteLine($"[Deleted] Name: {x.Name}, OccurredAt:{x.TimeOccurred.ToLocalTime()}");
-                })
+                    {
+                        if (config.LoggingEnabled) return;
+                        Console.WriteLine($"[Deleted] Name: {x.Name}, OccurredAt:{x.TimeOccurred.ToLocalTime()}");
+                    },
+                    () => Console.WriteLine("The deleted stream has completed."))
                 .DisposeWith(disposables);
 
             swatcher.Renamed.Subscribe(x =>
-                {
-                    if (config.LoggingEnabled)
+                    {
+                        if (config.LoggingEnabled) return;
                         Console.WriteLine(
                             $"[Renamed] OldName: {x.OldName}, Name: {x.Name}, OccurredAt:{x.TimeOccurred.ToLocalTime()}");
-                })
+                    },
+                    () => Console.WriteLine("The renamed stream has completed."))
                 .DisposeWith(disposables);
+
+            //to see the behavior when an exception is encountered, delete the Swatcher folder ;-).
+            swatcher.Exception.Subscribe(x =>
+            {
+                Console.WriteLine(x.Message);
+            })
+            .DisposeWith(disposables);
 
             swatcher.Start().GetAwaiter().GetResult();
 
@@ -72,7 +83,7 @@ namespace ReactiveHelloWorld
 
         private static ISwatcherConfig CreateConfiguration()
         {
-            BraveLantern.Swatcher.Logging.LogProvider.SetCurrentLogProvider(new ColoredConsoleLogProvider());
+            LogProvider.SetCurrentLogProvider(new ColoredConsoleLogProvider());
             //The swatcherId parameter is optional in case you don't want to use it. It really comes 
             //in handy when you are creating several Swatchers at runtime and you need to know from  
             //which Swatcher an event is being raised.

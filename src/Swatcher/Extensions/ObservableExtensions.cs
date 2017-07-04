@@ -31,6 +31,16 @@ namespace BraveLantern.Swatcher.Extensions
             return observable.Where(x => x != null);
         }
 
+        public static IObservable<bool> WhereTrue(this IObservable<bool> observable)
+        {
+            return observable.Where(x => x);
+        }
+
+        public static IObservable<bool> WhereFalse(this IObservable<bool> observable)
+        {
+            return observable.Where(x => !x);
+        }
+
         /// <summary>
         ///     Equivalent to observable.Where(x => x.Any())
         /// </summary>
