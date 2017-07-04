@@ -391,7 +391,7 @@ namespace BraveLantern.Swatcher.Logging
         /// <summary>
         /// Gets the specified named logger.
         /// </summary>
-        /// <param name="name">Name of the logger.</param>
+        /// <param name="name">Path of the logger.</param>
         /// <returns>The logger reference.</returns>
         Logger GetLogger(string name);
 
@@ -1284,7 +1284,7 @@ namespace BraveLantern.Swatcher.Logging.LogProviders
                                                  ParameterExpression instanceParam)
             {
                 //Action<object, object, string, Exception> Log =
-                //(logger, callerStackBoundaryDeclaringType, level, message, exception) => { ((ILogger)logger).Log(new LoggingEvent(callerStackBoundaryDeclaringType, logger.Repository, logger.Name, level, message, exception)); }
+                //(logger, callerStackBoundaryDeclaringType, level, message, exception) => { ((ILogger)logger).Log(new LoggingEvent(callerStackBoundaryDeclaringType, logger.Repository, logger.Path, level, message, exception)); }
                 MethodInfo writeExceptionMethodInfo = loggerType.GetMethodPortable("Log",
                                                                                    loggingEventType);
 
@@ -1320,12 +1320,12 @@ namespace BraveLantern.Swatcher.Logging.LogProviders
                     loggingEventType.GetConstructorPortable(typeof(Type), repositoryProperty.PropertyType, typeof(string), levelProperty.PropertyType, typeof(object), typeof(Exception));
 
                 //Func<object, object, string, Exception, object> Log =
-                //(logger, callerStackBoundaryDeclaringType, level, message, exception) => new LoggingEvent(callerStackBoundaryDeclaringType, ((ILogger)logger).Repository, ((ILogger)logger).Name, (Level)level, message, exception); }
+                //(logger, callerStackBoundaryDeclaringType, level, message, exception) => new LoggingEvent(callerStackBoundaryDeclaringType, ((ILogger)logger).Repository, ((ILogger)logger).Path, (Level)level, message, exception); }
                 NewExpression newLoggingEventExpression =
                     Expression.New(loggingEventConstructor,
                                    callerStackBoundaryDeclaringTypeParam,
                                    Expression.Property(instanceCast, "Repository"),
-                                   Expression.Property(instanceCast, "Name"),
+                                   Expression.Property(instanceCast, "Path"),
                                    levelCast,
                                    messageParam,
                                    exceptionParam);
@@ -2172,7 +2172,7 @@ namespace BraveLantern.Swatcher.Logging.LogProviders
         internal static MethodInfo GetMethodPortable(this Type type, string name)
         {
 #if LIBLOG_PORTABLE
-            return type.GetRuntimeMethods().SingleOrDefault(m => m.Name == name);
+            return type.GetRuntimeMethods().SingleOrDefault(m => m.Path == name);
 #else
             return type.GetMethod(name);
 #endif
