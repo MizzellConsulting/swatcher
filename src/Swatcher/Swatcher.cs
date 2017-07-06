@@ -470,7 +470,8 @@ namespace BraveLantern.Swatcher
                 {
                     //first, we bind to folder change notifications.
                     var folderChangeBindingStream = Observable.Repeat(Unit.Default)
-                        .Select(_ => SubscribeToFolderChanges(Config, WindowsFacade, DirectoryHandle))
+                        .Select(_ => 
+                            SubscribeToFolderChanges(Config, WindowsFacade, DirectoryHandle) && Directory.Exists(Config.PathToWatch))
                         .Publish()
                         .RefCount();
                     //if we successfully bound to folder changes, try to wait for notification callbacks.

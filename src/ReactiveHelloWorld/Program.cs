@@ -92,7 +92,7 @@ namespace ReactiveHelloWorld
             //The folderPath parameter is the path to a folder that you want Swatcher to watch.
             //UNC paths are not supported! If you want to monitor a network folder, you need to map
             //it as a drive.
-            var folderPath = @"C:\Users\Martin\Desktop\Monitored";
+            var folderPath = @"C:\Users\Marti\Desktop\Monitored";
             //The changeTypes parameter is an bitwise OR of the change types that you want Swatcher to tell you about.
             //see docs here: https://msdn.microsoft.com/en-us/library/t6xf43e0(v=vs.110).aspx
             var changeTypes = WatcherChangeTypes.All;
