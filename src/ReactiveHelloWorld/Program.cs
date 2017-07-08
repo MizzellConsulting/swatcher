@@ -78,6 +78,9 @@ namespace ReactiveHelloWorld
             disposables.Dispose();
             swatcher.Dispose();
 
+
+            Console.WriteLine("Swatcher has stopped. Press any key to exit.");
+            Console.ReadKey();
             //voila! contrived, but pretty easy, eh?
         }
 
@@ -102,7 +105,7 @@ namespace ReactiveHelloWorld
             //see docs here: https://msdn.microsoft.com/en-us/library/system.io.notifyfilters(v=vs.110).aspx
             var notificationFilters = SwatcherNotificationTypes.All;
 
-            return new SwatcherConfig(folderPath, changeTypes, itemTypes, notificationFilters, loggingEnabled: true);
+            return new SwatcherConfig(folderPath, changeTypes, itemTypes, notificationFilters, loggingEnabled: true, isRecursive:true);
         }
     }
 }

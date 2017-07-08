@@ -214,6 +214,7 @@ namespace BraveLantern.Swatcher
 
         private IObservable<SwatcherEventArgs> CreatePublicDeletedStream()
         {
+            //TODO: when a large folder is being deleted the observer is notified before deletion is complete.
             return NotificationStream
                 .WithConfiguredEventTypes(FileSystemItemEvent.Deleted)
                 .WithConfiguredItemTypes(Config)
@@ -638,7 +639,7 @@ namespace BraveLantern.Swatcher
                 fixed (byte* bufferPointer = result.Buffer)
                 {
                     var bytesReturnedNotUsed = 0;
-                    var bufferHandle = new HandleRef(result, (IntPtr)bufferPointer);
+                    var bufferHandle = new HandleRef(result, (IntPtr) bufferPointer);
                     var isRecursive = Convert.ToInt32(config.IsRecursive);
 
                     //because we're using IO completion ports, we pass our overlapped pointer into this unmanaged 
@@ -646,10 +647,18 @@ namespace BraveLantern.Swatcher
                     //passing the overlapped pointer (which has our IAsyncResult/byte array) back to us.
                     success = windowsFacade.ReadDirectoryChangesW(
                         directoryHandle, bufferHandle, Constants.DefaultBufferSize, isRecursive,
-                        (int)config.NotificationTypes, bytesReturnedNotUsed, overlappedPointer, SafeLocalMemHandle.Empty);
+                        (int) config.NotificationTypes, bytesReturnedNotUsed, overlappedPointer,
+                        SafeLocalMemHandle.Empty);
                 }
 
                 return success;
+            }
+            catch (ObjectDisposedException)
+            {
+                Thread.CurrentThread.Abort();
+                //hack: while it appeases the compiler, this should never be reached because we just 
+                //threw a thread abort exception.
+                return false;
             }
             finally
             {
