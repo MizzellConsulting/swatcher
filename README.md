@@ -5,7 +5,7 @@ The FileSystemWatcher is great for demo apps. For production code? Not so much. 
 
 To build Swatcher just open the `Swatcher.sln` in Visual Studio.
 
-Note that Swatcher has been compiled against the .Net 4.6.2 Framework.
+Note that Swatcher has been compiled against the .Net 4.5.2 Framework.
 
 ## Licensing
 
